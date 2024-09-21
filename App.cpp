@@ -5,6 +5,171 @@
 
 namespace {
 
+class QuadRenderer {
+public:
+    QuadRenderer() {
+        InitShaderProgram();
+        SetupQuad();
+    }
+
+    ~QuadRenderer() {
+        glDeleteVertexArrays(1, &quadVAO);
+        glDeleteBuffers(1, &quadVBO);
+        glDeleteProgram(shaderProgram);
+    }
+
+    void Render(GLuint textureID) {
+        glUseProgram(shaderProgram);
+
+        // Bind the texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+
+        // Set the texture uniform
+        glUniform1i(glGetUniformLocation(shaderProgram, "uTexture"), 0);
+
+        // Bind the VAO and draw the quad
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Cleanup bindings
+        glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+private:
+    GLuint quadVAO = 0;
+    GLuint quadVBO;
+    GLuint shaderProgram;
+
+    void SetupQuad() {
+        if (quadVAO == 0) {
+            float quadVertices[] = {
+                -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f
+            };
+
+            glGenVertexArrays(1, &quadVAO);
+            glGenBuffers(1, &quadVBO);
+
+            glBindVertexArray(quadVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+        }
+    }
+
+    void InitShaderProgram() {
+        const char* vertexShaderSrc = R"(#version 300 es
+            layout (location = 0) in vec2 aPos;
+            out vec2 vTexCoord;
+            void main() {
+                vTexCoord = aPos * 0.5 + 0.5; // Transform [-1, 1] to [0, 1]
+                gl_Position = vec4(aPos, 0.0, 1.0);
+            }
+        )";
+
+        const char* fragmentShaderSrc = R"(#version 300 es
+            precision highp float;
+            in vec2 vTexCoord;
+            out vec4 FragColor;
+            uniform sampler2D uTexture;
+            void main() {
+                FragColor = texture(uTexture, vTexCoord);
+            }
+        )";
+
+        shaderProgram = CompileShaders(vertexShaderSrc, fragmentShaderSrc);
+    }
+
+    GLuint CompileShaders(const char* vertexSrc, const char* fragmentSrc) {
+        GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexShader, 1, &vertexSrc, NULL);
+        glCompileShader(vertexShader);
+
+        int success;
+        glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            char infoLog[512];
+            glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+            std::cerr << "Vertex Shader compilation error: " << infoLog << std::endl;
+        }
+
+        GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentShader, 1, &fragmentSrc, NULL);
+        glCompileShader(fragmentShader);
+
+        glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            char infoLog[512];
+            glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+            std::cerr << "Fragment Shader compilation error: " << infoLog << std::endl;
+        }
+
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vertexShader);
+        glAttachShader(program, fragmentShader);
+        glLinkProgram(program);
+
+        glGetProgramiv(program, GL_LINK_STATUS, &success);
+        if (!success) {
+            char infoLog[512];
+            glGetProgramInfoLog(program, 512, NULL, infoLog);
+            std::cerr << "Shader Program linking error: " << infoLog << std::endl;
+        }
+
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+
+        return program;
+    }
+};
+
+class TextureHandler {
+public:
+    TextureHandler(int width, int height)
+        : canvasWidth(width), canvasHeight(height) {
+        InitGLTexture();
+    }
+
+    ~TextureHandler() {
+        glDeleteTextures(1, &textureID);
+    }
+
+    void UpdateTexture(const std::vector<unsigned char>& pixelData) {
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasWidth, canvasHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelData.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    GLuint GetTextureID() const {
+        return textureID;
+    }
+
+private:
+    GLuint textureID;
+    int canvasWidth, canvasHeight;
+
+    void InitGLTexture() {
+        glGenTextures(1, &textureID);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+};
+
+std::unique_ptr<TextureHandler> textureHandler;
+std::unique_ptr<QuadRenderer> quadRenderer;
+
 struct MouseEventRecord {
   std::string eventType;
   double clientX, clientY;
@@ -17,16 +182,11 @@ struct MouseEventRecord {
 // Queue to hold the mouse events
 std::queue<MouseEventRecord> mouseEventQueue;
 
-GLuint textureID;
-std::vector<unsigned char> pixelDataBuffer;
 int canvasWidth = 640;
 int canvasHeight = 480;
 
 static const char *s_applicationName = "BabylonNative Playground";
-GLuint quadVAO = 0;
-GLuint quadVBO;
 
-GLuint shaderProgram;
 // Global state for mouse and keyboard events
 double mouseX = 0, mouseY = 0;
 bool leftButtonPressed = false;
@@ -59,7 +219,7 @@ void MouseCallback(GLFWwindow *window, double xpos, double ypos) {
     // return;
   }
 
-  MouseEventRecord event = {
+  MouseEventRecord pointerEvent = {
       "pointermove",
       xpos,
       ypos,
@@ -74,7 +234,24 @@ void MouseCallback(GLFWwindow *window, double xpos, double ypos) {
       metaPressed,
       0 // No wheel delta for mousemove
   };
-  mouseEventQueue.push(event);
+  mouseEventQueue.push(pointerEvent);
+
+  MouseEventRecord mouseEvent = {
+      "mousemove",
+      xpos,
+      ypos,
+      movementX,
+      movementY,
+      -1, // No specific button for mousemove
+      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
+          (rightButtonPressed ? 4 : 0),
+      ctrlPressed,
+      shiftPressed,
+      altPressed,
+      metaPressed,
+      0 // No wheel delta for mousemove
+  };
+  mouseEventQueue.push(mouseEvent);
 }
 
 void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
@@ -91,11 +268,11 @@ void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
   }
 
   // Determine the event type
-  std::string eventType = (action == GLFW_PRESS) ? "pointerdown" : "pointerup";
+  std::string eventType = ((action == GLFW_PRESS) ? "down" : "up");
 
   // Create the event record and push it to the queue
-  MouseEventRecord event = {
-      eventType,
+  MouseEventRecord mouseEvent = {
+      "mouse" + eventType,
       mouseX,
       mouseY,
       0,
@@ -109,7 +286,25 @@ void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
       metaPressed,
       0 // No wheel delta for mouse button events
   };
-  mouseEventQueue.push(event);
+  mouseEventQueue.push(mouseEvent);
+
+  // Create the event record and push it to the queue
+  MouseEventRecord pointerEvent = {
+      "pointer" + eventType,
+      mouseX,
+      mouseY,
+      0,
+      0,
+      button,
+      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
+          (rightButtonPressed ? 4 : 0),
+      ctrlPressed,
+      shiftPressed,
+      altPressed,
+      metaPressed,
+      0 // No wheel delta for mouse button events
+  };
+  mouseEventQueue.push(pointerEvent);
 }
 
 void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset) {
@@ -131,31 +326,6 @@ void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset) {
   mouseEventQueue.push(event);
 }
 
-void InitGLTexture() {
-  // Generate an OpenGL texture
-  glGenTextures(1, &textureID);
-  glBindTexture(GL_TEXTURE_2D, textureID);
-
-  // Set texture parameters
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-  glBindTexture(GL_TEXTURE_2D, 0);
-
-  // Allocate memory for pixel data (RGBA)
-  pixelDataBuffer.resize(canvasWidth * canvasHeight * 4);
-}
-
-void UpdateTexture() {
-  // Bind the texture and update it with new pixel data
-  glBindTexture(GL_TEXTURE_2D, textureID);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasWidth, canvasHeight, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, pixelDataBuffer.data());
-  glBindTexture(GL_TEXTURE_2D, 0);
-}
-
 static void window_resize_callback(GLFWwindow *window, int width, int height) {
   canvasWidth = width;
   canvasHeight = height;
@@ -169,6 +339,8 @@ static void window_resize_callback(GLFWwindow *window, int width, int height) {
         Module.offscreenCanvas.height = $1;
       },
       width, height);
+
+  textureHandler = std::make_unique<TextureHandler>(canvasWidth, canvasHeight);
 }
 
 // Function to register GLFW callbacks
@@ -181,7 +353,7 @@ void RegisterCallbacks(GLFWwindow *window) {
   glfwSetCursorEnterCallback(window, MouseEnterCallback);
 }
 
-GLFWwindow *init_glfw(int width, int height) {
+GLFWwindow *InitGLFW(int width, int height) {
   if (!glfwInit()) {
     std::cerr << "Failed to init GLFW" << std::endl;
     return 0;
@@ -237,77 +409,6 @@ EM_ASYNC_JS(void, init_babylon_js, (), {
   })();
 });
 
-// Compile the shaders and link the shader program
-GLuint CompileShaders(const char *vertexSrc, const char *fragmentSrc) {
-  GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vertexShader, 1, &vertexSrc, NULL);
-  glCompileShader(vertexShader);
-
-  // Check for vertex shader compilation errors
-  int success;
-  glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-    std::cerr << "Vertex Shader compilation error: " << infoLog << std::endl;
-  }
-
-  GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fragmentShader, 1, &fragmentSrc, NULL);
-  glCompileShader(fragmentShader);
-
-  // Check for fragment shader compilation errors
-  glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-    std::cerr << "Fragment Shader compilation error: " << infoLog << std::endl;
-  }
-
-  // Link the shaders into a program
-  GLuint program = glCreateProgram();
-  glAttachShader(program, vertexShader);
-  glAttachShader(program, fragmentShader);
-  glLinkProgram(program);
-
-  // Check for linking errors
-  glGetProgramiv(program, GL_LINK_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetProgramInfoLog(program, 512, NULL, infoLog);
-    std::cerr << "Shader Program linking error: " << infoLog << std::endl;
-  }
-
-  // Cleanup shaders as they are now linked into the program
-  glDeleteShader(vertexShader);
-  glDeleteShader(fragmentShader);
-
-  return program;
-}
-
-void InitShaderProgram() {
-  const char *vertexShaderSrc = R"(#version 300 es
-        layout (location = 0) in vec2 aPos;
-        out vec2 vTexCoord;
-        void main() {
-            vTexCoord = aPos * 0.5 + 0.5; // Transform [-1, 1] to [0, 1]
-            gl_Position = vec4(aPos, 0.0, 1.0);
-        }
-    )";
-
-  const char *fragmentShaderSrc = R"(#version 300 es
-        precision highp float;
-        in vec2 vTexCoord;
-        out vec4 FragColor;
-        uniform sampler2D uTexture;
-        void main() {
-            FragColor = texture(uTexture, vTexCoord);
-        }
-    )";
-
-  shaderProgram = CompileShaders(vertexShaderSrc, fragmentShaderSrc);
-}
-
 void InitOffscreenCanvas() {
     EM_ASM({
         Module.offscreenCanvas = document.createElement("canvas");
@@ -319,60 +420,7 @@ void InitOffscreenCanvas() {
 
 void InitBabylon() {
   InitOffscreenCanvas();
-  InitShaderProgram();
-  InitGLTexture();
   init_babylon_js();
-}
-
-void SetupQuad() {
-  if (quadVAO == 0) {
-    // Define fullscreen quad vertices (two triangles)
-    float quadVertices[] = {// positions
-                            -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f};
-
-    // Generate VAO and VBO
-    glGenVertexArrays(1, &quadVAO);
-    glGenBuffers(1, &quadVBO);
-
-    glBindVertexArray(quadVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices,
-                 GL_STATIC_DRAW);
-
-    // Position attribute (location = 0 in shader)
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float),
-                          (void *)0);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-  }
-}
-
-void RenderFullscreenQuadWithTexture(GLuint textureID) {
-  if (quadVAO == 0) {
-    SetupQuad();
-  }
-
-  // Use the shader program
-  glUseProgram(shaderProgram);
-
-  // Bind the texture
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, textureID);
-
-  // Set the texture uniform (uTexture in the fragment shader)
-  glUniform1i(glGetUniformLocation(shaderProgram, "uTexture"), 0);
-
-  // Bind the VAO and draw the quad
-  glBindVertexArray(quadVAO);
-  glDrawArrays(GL_TRIANGLE_STRIP, 0,
-               4); // Drawing two triangles as a triangle strip
-
-  // Cleanup bindings
-  glBindVertexArray(0);
-  glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void ProcessMouseEvents() {
@@ -381,14 +429,13 @@ void ProcessMouseEvents() {
     mouseEventQueue.pop();
 
     // Forward the event to the offscreen canvas using EM_ASM
-    EM_ASM(
-        {
+    EM_ASM({
           if (!Module.offscreenCanvas) {
             return;
           }
 
           let eventType = UTF8ToString($0);
-          let t = eventType === "wheel" ? WheelEvent : PointerEvent;
+          let t = eventType === "wheel" ? WheelEvent : (eventType.startsWith("pointer") ? PointerEvent : MouseEvent);
           let mouseEvent = new t(eventType, {
             clientX : $1,
             clientY : $2,
@@ -423,6 +470,7 @@ void MainLoop(void *window) {
 
   // Call the Babylon.js function to transfer pixel data to C++ memory buffer
   int bufferSize = canvasWidth * canvasHeight * 4;
+  std::vector<unsigned char> pixelDataBuffer(bufferSize);
   EM_ASM({
       if (!Module.offscreenCanvas) 
         return;
@@ -437,20 +485,23 @@ void MainLoop(void *window) {
       Module.HEAPU8.set(pixelData, $0);
   }, pixelDataBuffer.data());
 
-  // Update the OpenGL texture with the new data
-  UpdateTexture();
+  // Update texture with pixel data
+  textureHandler->UpdateTexture(pixelDataBuffer);
 
   glClear(GL_COLOR_BUFFER_BIT);
 
-  RenderFullscreenQuadWithTexture(textureID);
+  quadRenderer->Render(textureHandler->GetTextureID());
 
   glfwSwapBuffers(glfwGetCurrentContext());
 }
+
 } // namespace
 
 int main(int argc, const char *const *argv) {
-  GLFWwindow *window = init_glfw(canvasWidth, canvasHeight);
+  GLFWwindow *window = InitGLFW(canvasWidth, canvasHeight);
   glfwGetWindowSize(window, &canvasWidth, &canvasHeight);
+  textureHandler = std::make_unique<TextureHandler>(canvasWidth, canvasHeight);
+  quadRenderer = std::make_unique<QuadRenderer>();
   InitBabylon();
   emscripten_set_main_loop_arg(MainLoop, window, 0, 1);
 
