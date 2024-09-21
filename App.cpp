@@ -1,17 +1,10 @@
-#include <GL/glew.h> // Make sure GLEW is included for OpenGL extensions
 #include <GLFW/glfw3.h>
 #include <iostream>
-
-#include <optional>
-
-#include <GLES3/gl3.h> // Include OpenGL headers for Emscripten
+#include <GLES3/gl3.h>
 #include <emscripten.h>
-#include <queue>
-#include <string>
 
 namespace {
 
-// Structure to hold mouse event data
 struct MouseEventRecord {
   std::string eventType;
   double clientX, clientY;
@@ -315,7 +308,17 @@ void InitShaderProgram() {
   shaderProgram = CompileShaders(vertexShaderSrc, fragmentShaderSrc);
 }
 
-void InitBabylon(int width, int height) {
+void InitOffscreenCanvas() {
+    EM_ASM({
+        Module.offscreenCanvas = document.createElement("canvas");
+        Module.gl = Module.offscreenCanvas.getContext("webgl2", { preserveDrawingBuffer: true }); // Preserve buffer to allow reading
+        Module.offscreenCanvas.width = $0;
+        Module.offscreenCanvas.height = $1;
+    }, canvasWidth, canvasHeight);
+}
+
+void InitBabylon() {
+  InitOffscreenCanvas();
   InitShaderProgram();
   InitGLTexture();
   init_babylon_js();
@@ -420,21 +423,25 @@ void MainLoop(void *window) {
 
   // Call the Babylon.js function to transfer pixel data to C++ memory buffer
   int bufferSize = canvasWidth * canvasHeight * 4;
-  EM_ASM(
-      {
-        if (Module.transferCanvasToCPP)
-          Module.transferCanvasToCPP($0, $1);
-      },
-      pixelDataBuffer.data(), bufferSize);
+  EM_ASM({
+      if (!Module.offscreenCanvas) 
+        return;
+      let width = Module.offscreenCanvas.width;
+      let height = Module.offscreenCanvas.height;
+
+      // Read pixels from the WebGL context (RGBA format)
+      let pixelData = new Uint8Array(width * height * 4);
+      Module.gl.readPixels(0, 0, width, height, Module.gl.RGBA, Module.gl.UNSIGNED_BYTE, pixelData);
+
+      // Copy the pixel data to the shared memory buffer (passed by C++)
+      Module.HEAPU8.set(pixelData, $0);
+  }, pixelDataBuffer.data());
 
   // Update the OpenGL texture with the new data
   UpdateTexture();
 
-  // Clear the screen
   glClear(GL_COLOR_BUFFER_BIT);
 
-  // Render the texture as a fullscreen quad (you should have a shader setup for
-  // this)
   RenderFullscreenQuadWithTexture(textureID);
 
   glfwSwapBuffers(glfwGetCurrentContext());
@@ -444,7 +451,7 @@ void MainLoop(void *window) {
 int main(int argc, const char *const *argv) {
   GLFWwindow *window = init_glfw(canvasWidth, canvasHeight);
   glfwGetWindowSize(window, &canvasWidth, &canvasHeight);
-  InitBabylon(canvasWidth, canvasHeight);
+  InitBabylon();
   emscripten_set_main_loop_arg(MainLoop, window, 0, 1);
 
   return 0;

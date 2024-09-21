@@ -3,28 +3,9 @@
 /// <reference path="../node_modules/babylonjs-materials/babylonjs.materials.module.d.ts" />
 /// <reference path="../node_modules/babylonjs-gui/babylon.gui.module.d.ts" />
 
-const offscreenCanvas = document.createElement("canvas");
-offscreenCanvas.width = 640;
-offscreenCanvas.height = 480;
-
-Module.offscreenCanvas = offscreenCanvas;
-const gl = offscreenCanvas.getContext("webgl2", { preserveDrawingBuffer: true }); // Preserve buffer to allow reading
-const engine = new BABYLON.Engine(gl, true, {
+const engine = new BABYLON.Engine(Module.gl, true, {
     premultipliedAlpha: false, // Disable premultiplied alpha to allow correct compositing
 });
-
-function transferCanvasToCPP(bufferPointer, bufferSize) {
-    let width = offscreenCanvas.width;
-    let height = offscreenCanvas.height;
-
-    // Read pixels from the WebGL context (RGBA format)
-    let pixelData = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelData);
-
-    // Copy the pixel data to the shared memory buffer (passed by C++)
-    Module.HEAPU8.set(pixelData, bufferPointer);
-}
-Module.transferCanvasToCPP = transferCanvasToCPP;
 
 var scene = new BABYLON.Scene(engine);
 
