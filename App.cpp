@@ -5,6 +5,171 @@
 
 namespace {
 
+struct InputEventRecord {
+  std::string eventType;
+  int keyCode;
+  double clientX, clientY;
+  double movementX, movementY;
+  int button, buttons;
+  bool ctrlKey, shiftKey, altKey, metaKey;
+  double wheelDelta;
+};
+
+std::queue<InputEventRecord> inputEventQueue;
+
+struct InputState {
+    double mouseX, mouseY;
+    bool leftButtonPressed, middleButtonPressed, rightButtonPressed;
+    bool ctrlPressed, shiftPressed, altPressed, metaPressed;
+    double wheelDelta;
+    bool insideWindow;
+    bool keys[GLFW_KEY_LAST] = {false};
+};
+
+InputState inputState;
+
+void MouseEnterCallback(GLFWwindow* window, int entered) {
+    inputState.insideWindow = entered;
+    if (!entered) {
+        InputEventRecord mouseEvent = {
+            "mouseout", -1, inputState.mouseX, inputState.mouseY, 0, 0, -1,
+            (inputState.leftButtonPressed ? 1 : 0) |
+            (inputState.middleButtonPressed ? 2 : 0) |
+            (inputState.rightButtonPressed ? 4 : 0),
+            inputState.ctrlPressed, inputState.shiftPressed,
+            inputState.altPressed, inputState.metaPressed, 0
+        };
+        inputEventQueue.push(mouseEvent);
+
+        InputEventRecord pointerEvent = {
+            "pointerout", -1, inputState.mouseX, inputState.mouseY, 0, 0, -1,
+            (inputState.leftButtonPressed ? 1 : 0) |
+            (inputState.middleButtonPressed ? 2 : 0) |
+            (inputState.rightButtonPressed ? 4 : 0),
+            inputState.ctrlPressed, inputState.shiftPressed,
+            inputState.altPressed, inputState.metaPressed, 0
+        };
+        inputEventQueue.push(pointerEvent);
+    }
+}
+
+void MouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    double movementX = xpos - inputState.mouseX;
+    double movementY = ypos - inputState.mouseY;
+    inputState.mouseX = xpos;
+    inputState.mouseY = ypos;
+
+    InputEventRecord mouseEvent = {
+        "mousemove", -1, xpos, ypos, movementX, movementY, -1,
+        (inputState.leftButtonPressed ? 1 : 0) |
+        (inputState.middleButtonPressed ? 2 : 0) |
+        (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, 0
+    };
+    inputEventQueue.push(mouseEvent);
+
+    InputEventRecord pointerEvent = {
+        "pointermove", -1, xpos, ypos, movementX, movementY, -1,
+        (inputState.leftButtonPressed ? 1 : 0) |
+        (inputState.middleButtonPressed ? 2 : 0) |
+        (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, 0
+    };
+    inputEventQueue.push(pointerEvent);
+}
+
+void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        inputState.leftButtonPressed = (action == GLFW_PRESS);
+    } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+        inputState.middleButtonPressed = (action == GLFW_PRESS);
+    } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        inputState.rightButtonPressed = (action == GLFW_PRESS);
+    }
+
+    std::string eventType = (action == GLFW_PRESS) ? "down" : "up";
+
+    InputEventRecord mouseEvent = {
+        "mouse" + eventType, -1, inputState.mouseX, inputState.mouseY, 0, 0, button,
+        (inputState.leftButtonPressed ? 1 : 0) |
+        (inputState.middleButtonPressed ? 2 : 0) |
+        (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, 0
+    };
+    inputEventQueue.push(mouseEvent);
+
+    InputEventRecord pointerEvent = {
+        "pointer" + eventType, -1, inputState.mouseX, inputState.mouseY, 0, 0, button,
+        (inputState.leftButtonPressed ? 1 : 0) |
+        (inputState.middleButtonPressed ? 2 : 0) |
+        (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, 0
+    };
+    inputEventQueue.push(pointerEvent);
+}
+
+void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    inputState.wheelDelta = yoffset;
+
+    InputEventRecord event = {
+        "wheel", -1, inputState.mouseX, inputState.mouseY, 0, 0, -1,
+        (inputState.leftButtonPressed ? 1 : 0) |
+        (inputState.middleButtonPressed ? 2 : 0) |
+        (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, yoffset
+    };
+    inputEventQueue.push(event);
+}
+
+void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (key >= 0 && key < GLFW_KEY_LAST) {
+        inputState.keys[key] = (action == GLFW_PRESS || action == GLFW_REPEAT);
+    }
+
+    std::string eventType = (action == GLFW_PRESS || action == GLFW_REPEAT) ? "keydown" : "keyup";
+
+    InputEventRecord event = {
+        eventType, key, inputState.mouseX, inputState.mouseY, 0, 0, -1, 0,
+        inputState.ctrlPressed, inputState.shiftPressed,
+        inputState.altPressed, inputState.metaPressed, 0
+    };
+    inputEventQueue.push(event);
+}
+
+void ProcessInputEvents() {
+    while (!inputEventQueue.empty()) {
+        InputEventRecord event = inputEventQueue.front();
+        inputEventQueue.pop();
+
+        EM_ASM({
+            if (!Module.offscreenCanvas) return;
+
+            let eventType = UTF8ToString($0);
+            let t = (eventType === "wheel") ? WheelEvent : (eventType.startsWith("mouse") ? MouseEvent : KeyboardEvent);
+            let inputEvent = new t(eventType, {
+                clientX : $1, clientY : $2,
+                movementX : $3, movementY : $4,
+                button : $5, buttons : $6,
+                ctrlKey : $7, shiftKey : $8,
+                altKey : $9, metaKey : $10,
+                deltaY : -50 * $11, keyCode : $12,
+                bubbles : true, cancelable : true,
+                view : window
+            });
+
+            Module.offscreenCanvas.dispatchEvent(inputEvent);
+        }, event.eventType.c_str(), event.clientX, event.clientY,
+           event.movementX, event.movementY, event.button, event.buttons,
+           event.ctrlKey, event.shiftKey, event.altKey, event.metaKey,
+           event.wheelDelta, event.keyCode);
+    }
+}
+
 class QuadRenderer {
 public:
     QuadRenderer() {
@@ -170,163 +335,12 @@ private:
 std::unique_ptr<TextureHandler> textureHandler;
 std::unique_ptr<QuadRenderer> quadRenderer;
 
-struct MouseEventRecord {
-  std::string eventType;
-  double clientX, clientY;
-  double movementX, movementY;
-  int button, buttons;
-  bool ctrlKey, shiftKey, altKey, metaKey;
-  double wheelDelta;
-};
-
-// Queue to hold the mouse events
-std::queue<MouseEventRecord> mouseEventQueue;
-
 int canvasWidth = 640;
 int canvasHeight = 480;
 
 static const char *s_applicationName = "BabylonNative Playground";
 
-// Global state for mouse and keyboard events
-double mouseX = 0, mouseY = 0;
-bool leftButtonPressed = false;
-bool middleButtonPressed = false;
-bool rightButtonPressed = false;
-bool ctrlPressed = false;
-bool shiftPressed = false;
-bool altPressed = false;
-bool metaPressed = false;
-double wheelDelta = 0;
-bool inside = true;
-void MouseEnterCallback(GLFWwindow *window, int entered) {
-  if (!entered) {
-    leftButtonPressed = false;
-    middleButtonPressed = false;
-    rightButtonPressed = false;
-    inside = false;
-  } else {
-    inside = true;
-  }
-}
-
-void MouseCallback(GLFWwindow *window, double xpos, double ypos) {
-  double movementX = xpos - mouseX;
-  double movementY = ypos - mouseY;
-  mouseX = xpos;
-  mouseY = ypos;
-
-  if (!inside || !leftButtonPressed) {
-    // return;
-  }
-
-  MouseEventRecord pointerEvent = {
-      "pointermove",
-      xpos,
-      ypos,
-      movementX,
-      movementY,
-      -1, // No specific button for mousemove
-      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
-          (rightButtonPressed ? 4 : 0),
-      ctrlPressed,
-      shiftPressed,
-      altPressed,
-      metaPressed,
-      0 // No wheel delta for mousemove
-  };
-  mouseEventQueue.push(pointerEvent);
-
-  MouseEventRecord mouseEvent = {
-      "mousemove",
-      xpos,
-      ypos,
-      movementX,
-      movementY,
-      -1, // No specific button for mousemove
-      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
-          (rightButtonPressed ? 4 : 0),
-      ctrlPressed,
-      shiftPressed,
-      altPressed,
-      metaPressed,
-      0 // No wheel delta for mousemove
-  };
-  mouseEventQueue.push(mouseEvent);
-}
-
-void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
-  // Update button press states based on the button and action
-  if (!inside) {
-    // return;
-  }
-  if (button == GLFW_MOUSE_BUTTON_LEFT) {
-    leftButtonPressed = (action == GLFW_PRESS);
-  } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
-    middleButtonPressed = (action == GLFW_PRESS);
-  } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-    rightButtonPressed = (action == GLFW_PRESS);
-  }
-
-  // Determine the event type
-  std::string eventType = ((action == GLFW_PRESS) ? "down" : "up");
-
-  // Create the event record and push it to the queue
-  MouseEventRecord mouseEvent = {
-      "mouse" + eventType,
-      mouseX,
-      mouseY,
-      0,
-      0,
-      button,
-      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
-          (rightButtonPressed ? 4 : 0),
-      ctrlPressed,
-      shiftPressed,
-      altPressed,
-      metaPressed,
-      0 // No wheel delta for mouse button events
-  };
-  mouseEventQueue.push(mouseEvent);
-
-  // Create the event record and push it to the queue
-  MouseEventRecord pointerEvent = {
-      "pointer" + eventType,
-      mouseX,
-      mouseY,
-      0,
-      0,
-      button,
-      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
-          (rightButtonPressed ? 4 : 0),
-      ctrlPressed,
-      shiftPressed,
-      altPressed,
-      metaPressed,
-      0 // No wheel delta for mouse button events
-  };
-  mouseEventQueue.push(pointerEvent);
-}
-
-void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset) {
-  MouseEventRecord event = {
-      "wheel",
-      mouseX,
-      mouseY,
-      0,
-      0,
-      -1, // No button associated with scroll
-      (leftButtonPressed ? 1 : 0) | (middleButtonPressed ? 2 : 0) |
-          (rightButtonPressed ? 4 : 0),
-      ctrlPressed,
-      shiftPressed,
-      altPressed,
-      metaPressed,
-      yoffset // Wheel delta
-  };
-  mouseEventQueue.push(event);
-}
-
-static void window_resize_callback(GLFWwindow *window, int width, int height) {
+void WindowResizeCallback(GLFWwindow *window, int width, int height) {
   canvasWidth = width;
   canvasHeight = height;
 
@@ -343,14 +357,13 @@ static void window_resize_callback(GLFWwindow *window, int width, int height) {
   textureHandler = std::make_unique<TextureHandler>(canvasWidth, canvasHeight);
 }
 
-// Function to register GLFW callbacks
 void RegisterCallbacks(GLFWwindow *window) {
-  glfwSetCursorPosCallback(window, MouseCallback); // Track mouse movement
-  glfwSetMouseButtonCallback(window,
-                             MouseButtonCallback); // Track mouse buttons
-  glfwSetScrollCallback(window, ScrollCallback);   // Track mouse scroll (wheel)
-  glfwSetWindowSizeCallback(window, window_resize_callback);
-  glfwSetCursorEnterCallback(window, MouseEnterCallback);
+      glfwSetCursorPosCallback(window, MouseCallback);
+    glfwSetMouseButtonCallback(window, MouseButtonCallback);
+    glfwSetScrollCallback(window, ScrollCallback);
+    glfwSetKeyCallback(window, KeyCallback);
+    glfwSetCursorEnterCallback(window, MouseEnterCallback);
+  glfwSetWindowSizeCallback(window, WindowResizeCallback);
 }
 
 GLFWwindow *InitGLFW(int width, int height) {
@@ -423,50 +436,10 @@ void InitBabylon() {
   init_babylon_js();
 }
 
-void ProcessMouseEvents() {
-  while (!mouseEventQueue.empty()) {
-    MouseEventRecord event = mouseEventQueue.front();
-    mouseEventQueue.pop();
-
-    // Forward the event to the offscreen canvas using EM_ASM
-    EM_ASM({
-          if (!Module.offscreenCanvas) {
-            return;
-          }
-
-          let eventType = UTF8ToString($0);
-          let t = eventType === "wheel" ? WheelEvent : (eventType.startsWith("pointer") ? PointerEvent : MouseEvent);
-          let mouseEvent = new t(eventType, {
-            clientX : $1,
-            clientY : $2,
-            screenX : $1,
-            screenY : $2,
-            movementX : $10,
-            movementY : $11,
-            button : $3,
-            buttons : $4,
-            ctrlKey : $5,
-            shiftKey : $6,
-            altKey : $7,
-            metaKey : $8,
-            deltaY : -50 * $9, // Only for wheel events
-            bubbles : true,
-            cancelable : true,
-            view : window,
-          });
-
-          Module.offscreenCanvas.dispatchEvent(mouseEvent);
-        },
-        event.eventType.c_str(), event.clientX, event.clientY, event.button,
-        event.buttons, event.ctrlKey, event.shiftKey, event.altKey,
-        event.metaKey, event.wheelDelta, event.movementX, event.movementY);
-  }
-}
-
 void MainLoop(void *window) {
   glfwPollEvents();
 
-  ProcessMouseEvents();
+  ProcessInputEvents();
 
   // Call the Babylon.js function to transfer pixel data to C++ memory buffer
   int bufferSize = canvasWidth * canvasHeight * 4;
