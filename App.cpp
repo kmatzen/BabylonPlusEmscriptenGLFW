@@ -79,7 +79,7 @@ void MouseEnterCallback(GLFWwindow *window, int entered) {
   inputState.insideWindow = entered;
   if (!entered) {
     // If the mouse leaves, releases a button, and then enters, babylon.js
-    // keeps responding to the move events as if the button weren't released.
+    // keeps responding to the move events as if the buttons weren't released.
     // Here's a hack that simulates the mouse up events for all pressed buttons
     // at the time of leave.
     if (inputState.leftButtonPressed) {
