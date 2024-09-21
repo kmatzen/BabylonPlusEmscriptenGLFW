@@ -3,5 +3,3 @@ This project demonstrates how to integrate Babylon.js into a GLFW application, c
 
 # TODO
 - [ ] instructions
-- [ ] mouseout / mouseleave bug
-- [ ] scroll wheel speed
