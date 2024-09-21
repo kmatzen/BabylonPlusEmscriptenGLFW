@@ -28,11 +28,72 @@ struct InputState {
 
 InputState inputState;
 
+void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
+  if (button == GLFW_MOUSE_BUTTON_LEFT) {
+    inputState.leftButtonPressed = (action == GLFW_PRESS);
+  } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+    inputState.middleButtonPressed = (action == GLFW_PRESS);
+  } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+    inputState.rightButtonPressed = (action == GLFW_PRESS);
+  }
+
+  std::string eventType = (action == GLFW_PRESS) ? "down" : "up";
+
+  InputEventRecord mouseEvent = {"mouse" + eventType,
+                                 -1,
+                                 inputState.mouseX,
+                                 inputState.mouseY,
+                                 0,
+                                 0,
+                                 button,
+                                 (inputState.leftButtonPressed ? 1 : 0) |
+                                     (inputState.middleButtonPressed ? 2 : 0) |
+                                     (inputState.rightButtonPressed ? 4 : 0),
+                                 inputState.ctrlPressed,
+                                 inputState.shiftPressed,
+                                 inputState.altPressed,
+                                 inputState.metaPressed,
+                                 0};
+  inputEventQueue.push(mouseEvent);
+
+  InputEventRecord pointerEvent = {
+      "pointer" + eventType,
+      -1,
+      inputState.mouseX,
+      inputState.mouseY,
+      0,
+      0,
+      button,
+      (inputState.leftButtonPressed ? 1 : 0) |
+          (inputState.middleButtonPressed ? 2 : 0) |
+          (inputState.rightButtonPressed ? 4 : 0),
+      inputState.ctrlPressed,
+      inputState.shiftPressed,
+      inputState.altPressed,
+      inputState.metaPressed,
+      0};
+  inputEventQueue.push(pointerEvent);
+}
+
 void MouseEnterCallback(GLFWwindow *window, int entered) {
   inputState.insideWindow = entered;
   if (!entered) {
+    // If the mouse exists, releases a button, and then enters, babylon.js
+    // keeps responding to the move events as if the button weren't released.
+    // Here's a hack that simulates the mouse up events for all pressed buttons
+    // at the time of leave.
+    if (inputState.leftButtonPressed) {
+      MouseButtonCallback(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    }
+    if (inputState.middleButtonPressed) {
+      MouseButtonCallback(window, GLFW_MOUSE_BUTTON_MIDDLE, GLFW_RELEASE, 0);
+    }
+    if (inputState.rightButtonPressed) {
+      MouseButtonCallback(window, GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE, 0);
+    }
+
     InputEventRecord mouseEvent = {
-        "mouseout",
+        "mouseleave",
         -1,
         inputState.mouseX,
         inputState.mouseY,
@@ -50,7 +111,43 @@ void MouseEnterCallback(GLFWwindow *window, int entered) {
     inputEventQueue.push(mouseEvent);
 
     InputEventRecord pointerEvent = {
-        "pointerout",
+        "pointerleave",
+        -1,
+        inputState.mouseX,
+        inputState.mouseY,
+        0,
+        0,
+        -1,
+        (inputState.leftButtonPressed ? 1 : 0) |
+            (inputState.middleButtonPressed ? 2 : 0) |
+            (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed,
+        inputState.shiftPressed,
+        inputState.altPressed,
+        inputState.metaPressed,
+        0};
+    inputEventQueue.push(pointerEvent);
+  } else {
+    InputEventRecord mouseEvent = {
+        "mouseenter",
+        -1,
+        inputState.mouseX,
+        inputState.mouseY,
+        0,
+        0,
+        -1,
+        (inputState.leftButtonPressed ? 1 : 0) |
+            (inputState.middleButtonPressed ? 2 : 0) |
+            (inputState.rightButtonPressed ? 4 : 0),
+        inputState.ctrlPressed,
+        inputState.shiftPressed,
+        inputState.altPressed,
+        inputState.metaPressed,
+        0};
+    inputEventQueue.push(mouseEvent);
+
+    InputEventRecord pointerEvent = {
+        "pointerenter",
         -1,
         inputState.mouseX,
         inputState.mouseY,
@@ -100,53 +197,6 @@ void MouseCallback(GLFWwindow *window, double xpos, double ypos) {
       movementX,
       movementY,
       -1,
-      (inputState.leftButtonPressed ? 1 : 0) |
-          (inputState.middleButtonPressed ? 2 : 0) |
-          (inputState.rightButtonPressed ? 4 : 0),
-      inputState.ctrlPressed,
-      inputState.shiftPressed,
-      inputState.altPressed,
-      inputState.metaPressed,
-      0};
-  inputEventQueue.push(pointerEvent);
-}
-
-void MouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
-  if (button == GLFW_MOUSE_BUTTON_LEFT) {
-    inputState.leftButtonPressed = (action == GLFW_PRESS);
-  } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
-    inputState.middleButtonPressed = (action == GLFW_PRESS);
-  } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-    inputState.rightButtonPressed = (action == GLFW_PRESS);
-  }
-
-  std::string eventType = (action == GLFW_PRESS) ? "down" : "up";
-
-  InputEventRecord mouseEvent = {"mouse" + eventType,
-                                 -1,
-                                 inputState.mouseX,
-                                 inputState.mouseY,
-                                 0,
-                                 0,
-                                 button,
-                                 (inputState.leftButtonPressed ? 1 : 0) |
-                                     (inputState.middleButtonPressed ? 2 : 0) |
-                                     (inputState.rightButtonPressed ? 4 : 0),
-                                 inputState.ctrlPressed,
-                                 inputState.shiftPressed,
-                                 inputState.altPressed,
-                                 inputState.metaPressed,
-                                 0};
-  inputEventQueue.push(mouseEvent);
-
-  InputEventRecord pointerEvent = {
-      "pointer" + eventType,
-      -1,
-      inputState.mouseX,
-      inputState.mouseY,
-      0,
-      0,
-      button,
       (inputState.leftButtonPressed ? 1 : 0) |
           (inputState.middleButtonPressed ? 2 : 0) |
           (inputState.rightButtonPressed ? 4 : 0),
@@ -215,10 +265,13 @@ void ProcessInputEvents() {
             return;
 
           let eventType = UTF8ToString($0);
-          let t = (eventType === "wheel")
-                      ? WheelEvent
-                      : (eventType.startsWith("mouse") ? MouseEvent
-                                                       : KeyboardEvent);
+          let t =
+              (eventType === "wheel")
+                  ? WheelEvent
+                  : (eventType.startsWith("mouse")
+                         ? MouseEvent
+                         : (eventType.startsWith("pointer") ? PointerEvent
+                                                            : KeyboardEvent));
           let inputEvent = new t(eventType, {
             clientX : $1,
             clientY : $2,
@@ -230,13 +283,18 @@ void ProcessInputEvents() {
             shiftKey : $8,
             altKey : $9,
             metaKey : $10,
-            deltaY : -50 * $11,
+            deltaY : -100 * $11,
+            deltaMode :
+                0, // DOM_DELTA_PIXEL: 100 pixels make up a step -
+                   // https://github.com/emscripten-core/emscripten/blob/8eb432e21ba19b3f14b2b367891c03f704ad45bf/src/library_browser.js#L514C18-L514C60
             keyCode : $12,
             bubbles : true,
             cancelable : true,
-            view : window
+            view : window,
+            target : Module.offscreenCanvas,
           });
 
+          console.log(inputEvent);
           Module.offscreenCanvas.dispatchEvent(inputEvent);
         },
         event.eventType.c_str(), event.clientX, event.clientY, event.movementX,
